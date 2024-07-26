@@ -2,7 +2,7 @@ import torch
 import os
 import PIL
 from .vision import VisionDataset
-from .utils import download_file_from_google_drive, check_integrity
+from torchvision.datasets.utils import download_file_from_google_drive, check_integrity
 
 
 class CelebA(VisionDataset):
@@ -83,19 +83,19 @@ class CelebA(VisionDataset):
                              'or split="valid" or split="test"')
 
         with open(os.path.join(self.root, self.base_folder, "list_eval_partition.txt"), "r") as f:
-            splits = pandas.read_csv(f, delim_whitespace=True, header=None, index_col=0)
+            splits = pandas.read_csv(f, sep='\s+', header=None, index_col=0)
 
         with open(os.path.join(self.root, self.base_folder, "identity_CelebA.txt"), "r") as f:
-            self.identity = pandas.read_csv(f, delim_whitespace=True, header=None, index_col=0)
+            self.identity = pandas.read_csv(f, sep='\s+', header=None, index_col=0)
 
         with open(os.path.join(self.root, self.base_folder, "list_bbox_celeba.txt"), "r") as f:
-            self.bbox = pandas.read_csv(f, delim_whitespace=True, header=1, index_col=0)
+            self.bbox = pandas.read_csv(f, sep='\s+', header=1, index_col=0)
 
         with open(os.path.join(self.root, self.base_folder, "list_landmarks_align_celeba.txt"), "r") as f:
-            self.landmarks_align = pandas.read_csv(f, delim_whitespace=True, header=1)
+            self.landmarks_align = pandas.read_csv(f, sep='\s+', header=1)
 
         with open(os.path.join(self.root, self.base_folder, "list_attr_celeba.txt"), "r") as f:
-            self.attr = pandas.read_csv(f, delim_whitespace=True, header=1)
+            self.attr = pandas.read_csv(f, sep='\s+', header=1)
 
         mask = (splits[1] == split)
         self.filename = splits[mask].index.values
