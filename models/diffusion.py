@@ -339,3 +339,38 @@ class Model(nn.Module):
         h = nonlinearity(h)
         h = self.conv_out(h)
         return h
+    
+    def forward_ret_h(self, x, t):
+        assert x.shape[2] == x.shape[3] == self.resolution
+        temb = get_timestep_embedding(t, self.ch)
+        temb = self.temb.dense[0](temb)
+        temb = nonlinearity(temb)
+        temb = self.temb.dense[1](temb)
+        with torch.no_grad():
+            hs = [self.conv_in(x)]
+            for i_level in range(self.num_resolutions):
+                for i_block in range(self.num_res_blocks):
+                    h = self.down[i_level].block[i_block](hs[-1], temb)
+                    if len(self.down[i_level].attn) > 0:
+                        h = self.down[i_level].attn[i_block](h)
+                    hs.append(h)
+                if i_level != self.num_resolutions - 1:
+                    hs.append(self.down[i_level].downsample(hs[-1]))
+        h = hs[-1].detach().requires_grad_()
+        h = self.mid.block_1(h, temb)
+        h = self.mid.attn_1(h)
+        h = self.mid.block_2(h, temb)
+        h_mid = h
+        with torch.no_grad():
+            for i_level in reversed(range(self.num_resolutions)):
+                for i_block in range(self.num_res_blocks + 1):
+                    h = self.up[i_level].block[i_block](
+                        torch.cat([h, hs.pop()], dim=1), temb)
+                    if len(self.up[i_level].attn) > 0:
+                        h = self.up[i_level].attn[i_block](h)
+                if i_level != 0:
+                    h = self.up[i_level].upsample(h)
+            h = self.norm_out(h)
+            h = nonlinearity(h)
+            out = self.conv_out(h)
+        return out, h_mid
