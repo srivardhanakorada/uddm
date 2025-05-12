@@ -374,3 +374,45 @@ class Model(nn.Module):
             h = nonlinearity(h)
             out = self.conv_out(h)
         return out, h_mid
+    
+    def forward_with_h(self, x, t, gamma=0.0, grad=None):
+        # print(f"GAMMA : {gamma}")
+        assert x.shape[2] == x.shape[3] == self.resolution
+        temb = get_timestep_embedding(t, self.ch)
+        temb = self.temb.dense[0](temb)
+        temb = nonlinearity(temb)
+        temb = self.temb.dense[1](temb)
+        with torch.no_grad():
+            hs = [self.conv_in(x)]
+            for i_level in range(self.num_resolutions):
+                for i_block in range(self.num_res_blocks):
+                    h = self.down[i_level].block[i_block](hs[-1], temb)
+                    if len(self.down[i_level].attn) > 0:
+                        h = self.down[i_level].attn[i_block](h)
+                    hs.append(h)
+                if i_level != self.num_resolutions - 1:
+                    hs.append(self.down[i_level].downsample(hs[-1]))
+        h = hs[-1].detach().requires_grad_()
+        h = self.mid.block_1(h, temb)
+        h = self.mid.attn_1(h)
+        h = self.mid.block_2(h, temb)
+        h_before = h.clone()
+        if grad is not None:
+            step = gamma * grad
+            h = h - step
+            diff_norm = (h - h_before).norm().item()
+            step_norm = step.norm().item()
+            print(f"Timestep {t[0].item()} : [H-edit] Δ‖h‖ = {diff_norm:.6f}, ‖step‖ = {step_norm:.6f}, h[0,0,0,0]: {h_before[0,0,0,0].item():.6f} → {h[0,0,0,0].item():.6f}")
+        h_mid = h
+        for i_level in reversed(range(self.num_resolutions)):
+            for i_block in range(self.num_res_blocks + 1):
+                h = self.up[i_level].block[i_block](
+                    torch.cat([h, hs.pop()], dim=1), temb)
+                if len(self.up[i_level].attn) > 0:
+                    h = self.up[i_level].attn[i_block](h)
+            if i_level != 0:
+                h = self.up[i_level].upsample(h)
+        h = self.norm_out(h)
+        h = nonlinearity(h)
+        out = self.conv_out(h)
+        return out, h_before,h_mid

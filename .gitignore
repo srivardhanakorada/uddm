@@ -4,3 +4,6 @@ data
 debug
 logs
 pretrained
+checkpoints
+run_results
+phase4_results
