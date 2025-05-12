@@ -28,11 +28,11 @@ def compute_alpha(beta, t):
     return a
 
 def kl_uniform_loss(proj, centroids, temperature=0.005, scale=1000.0):
-    sim = F.cosine_similarity(proj.unsqueeze(1), centroids.unsqueeze(0), dim=2)  # [B, K]
-    pt = F.softmax(sim / temperature, dim=1)  # sharpened
+    sim = F.cosine_similarity(proj.unsqueeze(1), centroids.unsqueeze(0), dim=2)
+    pt = F.softmax(sim / temperature, dim=1)
     uniform = torch.full_like(pt, 1.0 / pt.size(1))
     kl = F.kl_div(pt.log(), uniform, reduction='batchmean')
-    return scale * kl, pt  # scaled
+    return scale * kl, pt
 
 def generalized_steps(x, seq, model, b, **kwargs):
     with torch.no_grad():
@@ -110,78 +110,58 @@ def generalized_steps_ret_clip(x, seq, model, b, **kwargs):
     est_clip = proj_model(h_flat,t_surrogate)
     return xs,est_clip
 
-def mod_generalized_steps_ret_h(x, seq, model, b, **kwargs):
+def mod_generalized_steps(x, seq, model, b, **kwargs):
     n = x.size(0)
     seq_next = [-1] + list(seq[:-1])
     x0_preds = []
     xs = [x]
-
     proj_model = HToCLIPJoint(h_dim=8192, t_dim=128, out_dim=512, num_timesteps=50).to('cuda')
     proj_model.load_state_dict(torch.load(kwargs.get("model_path", None)))
     proj_model.eval()
-
     timestep_map = {step: idx for idx, step in enumerate(seq)}
     h_un_mod, h_mod = [], []
     kl_per_timestep = []
     diff_stats = []
-
     temperature = kwargs.get("temperature", 0.07)
     gamma = kwargs.get("gamma", 0.07)
     clip_centroids = torch.from_numpy(np.load(kwargs.get("centroids_path", None))).float().to('cuda')
-
     for i, j in zip(reversed(seq), reversed(seq_next)):
         t = torch.full((n,), i, dtype=torch.long, device=x.device)
         next_t = torch.full((n,), j, dtype=torch.long, device=x.device)
         t_surrogate = torch.full((n,), timestep_map[i], dtype=torch.long, device=x.device)
-
         at = compute_alpha(b, t)
         at_next = compute_alpha(b, next_t)
-
         xt = xs[-1].to('cuda')
         xt.requires_grad = False
-
         if 700 <= i <= 900:
             with torch.enable_grad():
-                # Original
                 et_before, h_before, _ = model.module.forward_with_h(xt, t, gamma=0, grad=None)
                 x0_before = (xt - et_before * (1 - at).sqrt()) / at.sqrt()
                 proj_before = proj_model(h_before.view(h_before.size(0), -1), t_surrogate)
                 kl_before, _ = kl_uniform_loss(proj_before, clip_centroids, temperature)
-
-                # Gradient + edited h
                 grad = torch.autograd.grad(kl_before, h_before, retain_graph=True)[0]
                 et_after, _, h_after = model.module.forward_with_h(xt, t, gamma=gamma, grad=grad)
                 x0_after = (xt - et_after * (1 - at).sqrt()) / at.sqrt()
                 proj_after = proj_model(h_after.view(h_after.size(0), -1), t_surrogate)
                 kl_after, _ = kl_uniform_loss(proj_after, clip_centroids, temperature)
-
-                # Log deltas
                 delta_h = (h_after - h_before).norm().item()
                 delta_et = (et_after - et_before).norm().item()
                 delta_x0 = (x0_after - x0_before).norm().item()
-
                 print(f"Timestep {i} : KL before = {kl_before.item():.4f}, after = {kl_after.item():.4f}")
-                print(f"             ‖Δh‖ = {delta_h:.4f}, ‖Δet‖ = {delta_et:.4f}, ‖Δx₀‖ = {delta_x0:.4f}")
-
+                print(f"‖Δh‖ = {delta_h:.4f}, ‖Δet‖ = {delta_et:.4f}, ‖Δx₀‖ = {delta_x0:.4f}")
                 kl_per_timestep.append((i, kl_before.item(), kl_after.item()))
                 diff_stats.append((i, delta_h, delta_et, delta_x0))
-
-                # Use edited et
                 et = et_after
                 h_un_mod.append(h_before)
                 h_mod.append(h_after)
         else:
-            with torch.no_grad():
-                et, _, _ = model.module.forward_with_h(xt, t, gamma=0, grad=None)
-
+            with torch.no_grad(): et, _, _ = model.module.forward_with_h(xt, t, gamma=0, grad=None)
         x0_t = (xt - et * (1 - at).sqrt()) / at.sqrt()
         x0_preds.append(x0_t.cpu())
-
         c1 = kwargs.get("eta", 0) * ((1 - at / at_next) * (1 - at_next) / (1 - at)).sqrt()
         c2 = ((1 - at_next) - c1 ** 2).sqrt()
         xt_next = at_next.sqrt() * x0_t + c1 * torch.randn_like(x) + c2 * et
         xs.append(xt_next.cpu())
-
     return xs, h_un_mod, h_mod, kl_per_timestep, diff_stats
 
 def ddpm_steps(x, seq, model, b, **kwargs):

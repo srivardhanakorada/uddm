@@ -21,6 +21,7 @@ def parse_args_and_config():
     parser.add_argument("--sequence", action="store_true")
     parser.add_argument("--mode",type=int,default=0,help="0:Unmodified, 1:Modified")
     parser.add_argument("--collect", action="store_true", help="Collect h?")
+    parser.add_argument("--phase_3", action="store_true", help="Run Phase 3?")
     args = parser.parse_args()
     with open(os.path.join("configs", args.config), "r") as f: config = yaml.safe_load(f)
     new_config = dict2namespace(config)
@@ -44,7 +45,7 @@ def dict2namespace(config):
 def main():
     args, config = parse_args_and_config()
     runner = Diffusion(args, config)
-    runner.sample(args.mode)
+    runner.sample(args.mode,args.phase_3)
     return 0
 
 if __name__ == "__main__": sys.exit(main())
